@@ -33,6 +33,7 @@
 #include <libpmemobj/tx_base.h>
 #include <dlfcn.h>
 #include <cstdlib>
+#include <atomic>
 
 #include "mock_tx_alloc.h"
 
@@ -40,11 +41,14 @@ thread_local bool tx_alloc_should_fail;
 
 extern "C" PMEMoid pmemobj_tx_alloc(size_t size, uint64_t type_num);
 
+typedef PMEMoid (tx_alloc_func)(size_t, uint64_t);
+
 PMEMoid pmemobj_tx_alloc(size_t size, uint64_t type_num) {
-	static PMEMoid (*actual)(size_t, uint64_t);
+	static std::atomic<tx_alloc_func*> actual;
 
 	if (actual == NULL) {
-		actual = (decltype(actual))dlsym(RTLD_NEXT, "pmemobj_tx_alloc");
+		actual.store((tx_alloc_func*)dlsym(RTLD_NEXT, "pmemobj_tx_alloc"),
+			std::memory_order_relaxed);
 		if (actual == NULL)
 			abort();
 	}
@@ -52,5 +56,5 @@ PMEMoid pmemobj_tx_alloc(size_t size, uint64_t type_num) {
 	if (tx_alloc_should_fail)
 		return OID_NULL;
 
-	return actual(size, type_num);
+	return actual.load(std::memory_order_relaxed)(size, type_num);
 }
