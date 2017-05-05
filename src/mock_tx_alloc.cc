@@ -33,24 +33,46 @@
 #include <libpmemobj/tx_base.h>
 #include <dlfcn.h>
 #include <cstdlib>
+#include <string>
+#include <type_traits>
+#include <utility>
 
 #include "mock_tx_alloc.h"
 
 thread_local bool tx_alloc_should_fail;
 
+namespace {
+
+template<typename func>
+class next_symbol {
+    func *address;
+
+public:
+
+    next_symbol(const std::string& name) {
+        address = (func*)(dlsym(RTLD_NEXT, name.c_str()));
+        if (address == nullptr)
+            abort();
+    }
+
+    template<typename... Args>
+    auto operator()(Args&&... args) -> decltype(address(std::forward<Args>(args)...)) {
+        return address(std::forward<Args>(args)...);
+    }
+
+};
+
+}
+
 extern "C" PMEMoid pmemobj_tx_alloc(size_t size, uint64_t type_num);
 
 PMEMoid pmemobj_tx_alloc(size_t size, uint64_t type_num) {
-    static PMEMoid (*actual)(size_t, uint64_t);
-
-    if (actual == nullptr) {
-        actual = (decltype(actual))dlsym(RTLD_NEXT, "pmemobj_tx_alloc");
-        if (actual == nullptr)
-            abort();
-    }
+    static next_symbol<decltype(pmemobj_tx_alloc)> real{std::string("pmemobj_tx_alloc")};
 
     if (tx_alloc_should_fail)
         return OID_NULL;
     
-    return actual(size, type_num);
+    int x;
+
+    return real(size, type_num);
 }
